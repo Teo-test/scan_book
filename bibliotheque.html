@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Ma Bibliothèque</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=DM+Mono:wght@300;400;500&display=swap');
 
@@ -102,46 +102,42 @@
     margin-bottom: 20px;
   }
 
-  #scanner-container {
-    position: relative;
+  /* Zone scanner html5-qrcode */
+  #reader {
     width: 100%;
-    aspect-ratio: 4/3;
-    background: #000;
     border-radius: 3px;
     overflow: hidden;
     display: none;
+    border: 1px solid var(--border);
   }
-  #scanner-container.active { display: block; }
-  #scanner-container video { width: 100%; height: 100%; object-fit: cover; }
-  #scanner-container canvas { display: none; }
+  #reader.active { display: block; }
 
-  .scan-overlay {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    pointer-events: none;
+  /* Overrides style html5-qrcode pour coller au thème */
+  #reader * { font-family: 'DM Mono', monospace !important; font-size: 0.72rem !important; }
+  #reader img[alt="Info icon"] { display: none; }
+  #reader__scan_region { background: #000; }
+  #reader__dashboard_section_swaplink { color: var(--gold) !important; }
+  #reader__status_span { color: var(--muted) !important; }
+  #reader__camera_selection { background: var(--surface2) !important; color: var(--text) !important;
+    border: 1px solid var(--border) !important; border-radius: 3px !important; padding: 4px 8px !important; }
+  #reader__dashboard { background: var(--surface) !important; border: none !important; padding: 8px 0 0 !important; }
+  #reader__filescan_input { color: var(--text) !important; }
+
+  /* Upload photo zone */
+  .upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 3px;
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    color: var(--muted);
+    font-size: 0.72rem;
+    margin-bottom: 10px;
   }
-  .scan-frame {
-    width: 80%;
-    height: 40%;
-    border: 2px solid var(--gold);
-    border-radius: 2px;
-    box-shadow: 0 0 0 2000px rgba(0,0,0,0.4);
-  }
-  .scan-line {
-    position: absolute;
-    width: 80%;
-    height: 2px;
-    background: var(--gold);
-    animation: scan 2s ease-in-out infinite;
-    box-shadow: 0 0 8px var(--gold);
-  }
-  @keyframes scan {
-    0%, 100% { top: 30%; }
-    50% { top: 70%; }
-  }
+  .upload-zone:hover { border-color: var(--gold); background: rgba(201,168,76,0.04); color: var(--gold); }
+  .upload-zone .upload-icon { font-size: 1.8rem; margin-bottom: 6px; }
+  #photo-input { display: none; }
 
   .btn {
     width: 100%;
@@ -571,14 +567,19 @@
   <aside class="sidebar">
     <div class="section-title">Scanner un livre</div>
     <div class="scan-box">
-      <div id="scanner-container">
-        <div class="scan-overlay">
-          <div class="scan-frame"></div>
-          <div class="scan-line"></div>
-        </div>
+      <!-- Upload photo (fonctionne sans HTTPS) -->
+      <div class="upload-zone" onclick="document.getElementById('photo-input').click()">
+        <div class="upload-icon">📸</div>
+        <div>Prendre / importer une photo du code-barres</div>
+        <div style="font-size:0.62rem;margin-top:4px;color:var(--muted)">Fonctionne partout • sans serveur</div>
       </div>
-      <button class="btn btn-primary" id="btn-scan" onclick="toggleScanner()">📷 Scanner un code-barres</button>
-      <button class="btn btn-danger" id="btn-stop" onclick="stopScanner()" style="display:none">⏹ Arrêter le scanner</button>
+      <input type="file" id="photo-input" accept="image/*" capture="environment" onchange="scanPhotoFile(this)">
+
+      <!-- Caméra live (HTTPS ou localhost uniquement) -->
+      <div id="reader"></div>
+      <button class="btn btn-secondary" id="btn-scan" onclick="toggleCamera()" style="margin-bottom:8px">📷 Caméra live (HTTPS requis)</button>
+      <button class="btn btn-danger" id="btn-stop" onclick="stopCamera()" style="display:none;margin-bottom:8px">⏹ Arrêter la caméra</button>
+
       <div class="isbn-row">
         <input type="text" id="isbn-input" placeholder="ISBN manuel..." maxlength="17">
         <button class="btn btn-secondary" onclick="lookupIsbn()">→</button>
@@ -717,43 +718,57 @@
 <script>
 let library = JSON.parse(localStorage.getItem('myLibrary') || '[]');
 let activeCategory = 'all';
-let scannerRunning = false;
+let html5QrScanner = null;
+let cameraRunning = false;
 
-// ─── SCANNER ─────────────────────────────────────────────────────────────────
-function toggleScanner() {
-  const container = document.getElementById('scanner-container');
-  container.classList.add('active');
+// ─── SCAN PHOTO (fonctionne partout, même en file://) ─────────────────────────
+async function scanPhotoFile(input) {
+  if (!input.files || !input.files[0]) return;
+  const file = input.files[0];
+  input.value = ''; // reset pour permettre re-scan du même fichier
+
+  try {
+    const scanner = new Html5Qrcode("reader");
+    const result = await scanner.scanFile(file, false);
+    await scanner.clear();
+    const isbn = result.trim();
+    document.getElementById('isbn-input').value = isbn;
+    showToast('Code-barres détecté : ' + isbn, 'success');
+    lookupIsbn(isbn);
+  } catch(e) {
+    showToast('Code-barres non détecté — essayez une photo plus nette ou saisissez l\'ISBN manuellement', 'error');
+  }
+}
+
+// ─── CAMÉRA LIVE (HTTPS / localhost uniquement) ───────────────────────────────
+function toggleCamera() {
+  document.getElementById('reader').classList.add('active');
   document.getElementById('btn-scan').style.display = 'none';
   document.getElementById('btn-stop').style.display = 'block';
 
-  Quagga.init({
-    inputStream: {
-      name: "Live",
-      type: "LiveStream",
-      target: container,
-      constraints: { facingMode: "environment" }
+  html5QrScanner = new Html5Qrcode("reader");
+  html5QrScanner.start(
+    { facingMode: "environment" },
+    { fps: 10, qrbox: { width: 250, height: 120 } },
+    (decodedText) => {
+      stopCamera();
+      document.getElementById('isbn-input').value = decodedText;
+      lookupIsbn(decodedText);
     },
-    decoder: { readers: ["ean_reader", "ean_8_reader", "upc_reader"] }
-  }, err => {
-    if (err) {
-      showToast("Caméra inaccessible : " + err, 'error');
-      stopScanner(); return;
-    }
-    Quagga.start();
-    scannerRunning = true;
+    () => {}
+  ).catch(err => {
+    showToast('Caméra inaccessible : ' + (err.message || err), 'error');
+    stopCamera();
   });
-
-  Quagga.onDetected(data => {
-    const code = data.codeResult.code;
-    stopScanner();
-    document.getElementById('isbn-input').value = code;
-    lookupIsbn(code);
-  });
+  cameraRunning = true;
 }
 
-function stopScanner() {
-  if (scannerRunning) { Quagga.stop(); scannerRunning = false; }
-  document.getElementById('scanner-container').classList.remove('active');
+function stopCamera() {
+  if (html5QrScanner && cameraRunning) {
+    html5QrScanner.stop().then(() => html5QrScanner.clear()).catch(()=>{});
+    cameraRunning = false;
+  }
+  document.getElementById('reader').classList.remove('active');
   document.getElementById('btn-scan').style.display = 'block';
   document.getElementById('btn-stop').style.display = 'none';
 }
