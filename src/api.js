@@ -45,6 +45,66 @@ async function fetchOpenLibrary(isbn) {
   };
 }
 
+// BnF (Bibliothèque nationale de France) — couvre quasi tous les livres
+// édités en France, y compris petits éditeurs absents d'Open Library/Google Books.
+// API SRU publique, CORS autorisé, sans clé.
+async function fetchBnF(isbn) {
+  const url = `https://catalogue.bnf.fr/api/SRU?version=1.2&operation=searchRetrieve`
+    + `&query=${encodeURIComponent(`bib.isbn any "${isbn}"`)}`
+    + `&recordSchema=dublincore&maximumRecords=1`;
+  const r = await fetch(url);
+  const xmlText = await r.text();
+  const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+
+  // numberOfRecords doit être >= 1
+  const num = doc.getElementsByTagNameNS('http://www.loc.gov/zing/srw/', 'numberOfRecords')[0];
+  if (!num || parseInt(num.textContent) === 0) return null;
+
+  const DC = 'http://purl.org/dc/elements/1.1/';
+  const get = (tag) => Array.from(doc.getElementsByTagNameNS(DC, tag)).map(n => n.textContent.trim());
+  const first = (tag) => get(tag)[0] || '';
+
+  const title = first('title');
+  if (!title) return null;
+
+  // Auteurs : "Nom, Prénom. Auteur du texte" → "Prénom Nom"
+  const authors = get('creator').map(s =>
+    s.replace(/\.\s*(Auteur.*|Compositeur.*|Illustrateur.*|.*)$/i, '')
+     .split(',').map(p => p.trim()).reverse().join(' ').trim()
+  ).filter(Boolean);
+
+  // Année : on prend les 4 chiffres de la 1re date
+  const date = first('date');
+  const year = (date.match(/\d{4}/) || [''])[0];
+
+  // Pages : extrait du format "1 vol. (189 p.) : ill. ..."
+  const format = first('format');
+  const pagesMatch = format.match(/(\d+)\s*p\./);
+  const pages = pagesMatch ? pagesMatch[1] : '';
+
+  // Genre depuis le sujet
+  const subject = first('subject');
+
+  // Langue : code ISO 639-2 (fre, eng…)
+  const lang639_2 = first('language').toLowerCase();
+  const langMap = { fre: 'fr', eng: 'en', spa: 'es', ger: 'de', deu: 'de', ita: 'it' };
+
+  return {
+    title,
+    author: authors.join(', '),
+    publisher: first('publisher').replace(/\s*\([^)]+\)\s*$/, ''), // retire la ville entre parenthèses
+    year,
+    pages,
+    isbn,
+    cover: '', // BnF ne fournit pas d'URL d'image standardisée via SRU
+    desc: '',
+    genre: subject ? mapGenre(subject) : '',
+    lang: mapLang(langMap[lang639_2] || ''),
+    category: '',
+    rating: ''
+  };
+}
+
 async function fetchGoogleBooks(isbn) {
   const r = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
   const d = await r.json();
@@ -76,6 +136,9 @@ export async function lookupIsbn(isbn) {
   try { book = await fetchOpenLibrary(isbn); } catch (e) {}
   if (!book) {
     try { book = await fetchGoogleBooks(isbn); } catch (e) {}
+  }
+  if (!book) {
+    try { book = await fetchBnF(isbn); } catch (e) {}
   }
 
   document.getElementById('loading-api').classList.remove('active');
