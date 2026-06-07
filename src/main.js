@@ -38,3 +38,6 @@ initView();
 renderCategories();
 renderGrid();
 updateStats();
+
+// Retire l'overlay de chargement une fois l'app prête
+document.getElementById('boot-overlay')?.remove();

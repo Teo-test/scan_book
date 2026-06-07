@@ -190,17 +190,50 @@ export function setCategory(c) {
 }
 
 // Crée une nouvelle catégorie depuis le formulaire (bouton +)
+// Sur mobile, prompt() est parfois bloqué — fallback inline avec un input.
 export function newCategory() {
-  const name = prompt('Nom de la nouvelle catégorie :');
-  if (!name) return;
-  const trimmed = name.trim();
-  if (!trimmed) return;
-  if (!state.customCategories.includes(trimmed)) {
-    state.customCategories.push(trimmed);
-    localStorage.setItem('customCategories', JSON.stringify(state.customCategories));
-  }
-  renderCategories();
-  document.getElementById('f-category').value = trimmed;
+  // Mini-modal inline (compatible iOS et Android)
+  const existing = document.getElementById('cat-modal');
+  if (existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'cat-modal';
+  modal.className = 'modal-overlay active';
+  modal.innerHTML = `
+    <div class="modal" style="max-width:380px">
+      <div class="modal-header">
+        <div class="modal-title">Nouvelle catégorie</div>
+      </div>
+      <div class="form-group">
+        <label>Nom</label>
+        <input type="text" id="cat-modal-input" placeholder="Ma pile à lire, Lu, Prêté…" autofocus>
+      </div>
+      <div style="display:flex; gap:8px; justify-content:flex-end">
+        <button class="btn btn-secondary" id="cat-modal-cancel" style="width:auto;padding:8px 16px">Annuler</button>
+        <button class="btn btn-primary" id="cat-modal-ok" style="width:auto;padding:8px 16px">Créer</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  const input = document.getElementById('cat-modal-input');
+  const close = () => modal.remove();
+  const submit = () => {
+    const trimmed = input.value.trim();
+    if (!trimmed) { close(); return; }
+    if (!state.customCategories.includes(trimmed)) {
+      state.customCategories.push(trimmed);
+      localStorage.setItem('customCategories', JSON.stringify(state.customCategories));
+    }
+    renderCategories();
+    document.getElementById('f-category').value = trimmed;
+    close();
+  };
+
+  document.getElementById('cat-modal-cancel').onclick = close;
+  document.getElementById('cat-modal-ok').onclick = submit;
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+  setTimeout(() => input.focus(), 50);
 }
 
 export function updateStats() {

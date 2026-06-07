@@ -1,23 +1,31 @@
-import { BrowserMultiFormatReader } from 'https://esm.sh/@zxing/browser@0.1.5';
-import { DecodeHintType, BarcodeFormat } from 'https://esm.sh/@zxing/library@0.21.3';
 import { showToast } from './ui.js';
 import { lookupIsbn } from './api.js';
 
-// Restreindre aux formats ISBN/livre : EAN-13 (toutes les ISBN-13), EAN-8,
-// UPC-A/UPC-E. Moins de formats = scan beaucoup plus rapide.
-const hints = new Map();
-hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-  BarcodeFormat.EAN_13,
-  BarcodeFormat.EAN_8,
-  BarcodeFormat.UPC_A,
-  BarcodeFormat.UPC_E,
-]);
-hints.set(DecodeHintType.TRY_HARDER, true);
+// ZXing est chargé à la demande pour ne pas bloquer le boot de l'app
+// si le CDN est lent ou indisponible (ex: téléphone hors-ligne).
+let zxingPromise = null;
+function loadZxing() {
+  if (!zxingPromise) {
+    zxingPromise = Promise.all([
+      import('https://esm.sh/@zxing/browser@0.1.5'),
+      import('https://esm.sh/@zxing/library@0.21.3'),
+    ]).then(([browser, library]) => {
+      const hints = new Map();
+      hints.set(library.DecodeHintType.POSSIBLE_FORMATS, [
+        library.BarcodeFormat.EAN_13,
+        library.BarcodeFormat.EAN_8,
+        library.BarcodeFormat.UPC_A,
+        library.BarcodeFormat.UPC_E,
+      ]);
+      hints.set(library.DecodeHintType.TRY_HARDER, true);
+      return new browser.BrowserMultiFormatReader(hints);
+    });
+  }
+  return zxingPromise;
+}
 
-const reader = new BrowserMultiFormatReader(hints);
 let cameraControls = null;
 
-// Charge un File en HTMLImageElement.
 function loadImage(file) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -28,8 +36,6 @@ function loadImage(file) {
   });
 }
 
-// Dessine une région (sx,sy,sw,sh) sur un canvas, redimensionnée à targetW,
-// avec rotation `angleDeg` autour du centre. Renvoie le canvas.
 function renderRegion(img, sx, sy, sw, sh, targetW, angleDeg = 0) {
   const scale = targetW / sw;
   const w = Math.round(sw * scale);
@@ -44,7 +50,6 @@ function renderRegion(img, sx, sy, sw, sh, targetW, angleDeg = 0) {
     return canvas;
   }
 
-  // Pour une rotation, on agrandit le canvas pour ne rien couper.
   const rad = (angleDeg * Math.PI) / 180;
   const sin = Math.abs(Math.sin(rad));
   const cos = Math.abs(Math.cos(rad));
@@ -60,7 +65,7 @@ function renderRegion(img, sx, sy, sw, sh, targetW, angleDeg = 0) {
   return canvas;
 }
 
-async function tryDecodeCanvas(canvas) {
+async function tryDecodeCanvas(reader, canvas) {
   try {
     const result = await reader.decodeFromCanvas(canvas);
     return result.getText().trim();
@@ -69,53 +74,37 @@ async function tryDecodeCanvas(canvas) {
   }
 }
 
-// Essaie une région à plusieurs rotations (le code-barres peut être incliné).
-async function tryDecodeRegionWithRotations(img, sx, sy, sw, sh, targetW) {
+async function tryDecodeRegionWithRotations(reader, img, sx, sy, sw, sh, targetW) {
   const angles = [0, -8, 8, -15, 15, -22, 22, -30, 30];
   for (const a of angles) {
     const canvas = renderRegion(img, sx, sy, sw, sh, targetW, a);
-    const text = await tryDecodeCanvas(canvas);
+    const text = await tryDecodeCanvas(reader, canvas);
     if (text) return text;
   }
   return null;
 }
 
-// Essaie plusieurs régions et échelles. Renvoie le texte ou null.
-async function decodeWithStrategies(img) {
+async function decodeWithStrategies(reader, img) {
   const W = img.naturalWidth;
   const H = img.naturalHeight;
-
-  // Format : [sx, sy, sw, sh, targetWidth]
-  // Les régions petites/zoomées passent en premier : sur une photo de dos
-  // de livre, le code-barres occupe souvent <5% de la surface, donc le
-  // scan en pleine image est lent et inefficace.
   const regions = [
-    // 1. Quadrants en premier (gros gain : code-barres = 4× plus de pixels relatifs)
-    [W / 2, H / 2, W / 2, H / 2, 1400], // bas-droit (le plus fréquent)
-    [0, H / 2, W / 2, H / 2, 1400],     // bas-gauche
-    [W / 2, 0, W / 2, H / 2, 1400],     // haut-droit
-    [0, 0, W / 2, H / 2, 1400],         // haut-gauche
-
-    // 2. Moitiés
-    [0, H / 2, W, H / 2, 1600],         // bas
-    [W / 2, 0, W / 2, H, 1600],         // droite
-
-    // 3. Centre zoomé
+    [W / 2, H / 2, W / 2, H / 2, 1400],
+    [0, H / 2, W / 2, H / 2, 1400],
+    [W / 2, 0, W / 2, H / 2, 1400],
+    [0, 0, W / 2, H / 2, 1400],
+    [0, H / 2, W, H / 2, 1600],
+    [W / 2, 0, W / 2, H, 1600],
     [W * 0.25, H * 0.25, W * 0.5, H * 0.5, 1200],
-
-    // 4. Image entière en dernier (filet de sécurité)
     [0, 0, W, H, 1600],
     [0, 0, W, H, 2400],
   ];
-
   for (const [sx, sy, sw, sh, tw] of regions) {
-    const text = await tryDecodeRegionWithRotations(img, sx, sy, sw, sh, tw);
+    const text = await tryDecodeRegionWithRotations(reader, img, sx, sy, sw, sh, tw);
     if (text) return text;
   }
   return null;
 }
 
-// Scan via photo (fonctionne partout, même en file://)
 export async function scanPhotoFile(input) {
   if (!input.files || !input.files[0]) return;
   const file = input.files[0];
@@ -123,8 +112,9 @@ export async function scanPhotoFile(input) {
 
   showToast('Analyse de l\'image…');
   try {
+    const reader = await loadZxing();
     const img = await loadImage(file);
-    const isbn = await decodeWithStrategies(img);
+    const isbn = await decodeWithStrategies(reader, img);
     if (!isbn) {
       showToast("Code-barres non détecté — essayez une photo plus rapprochée du code-barres", 'error');
       return;
@@ -133,11 +123,10 @@ export async function scanPhotoFile(input) {
     showToast('Code-barres détecté : ' + isbn, 'success');
     lookupIsbn(isbn);
   } catch (e) {
-    showToast("Erreur lors de l'analyse de l'image", 'error');
+    showToast("Erreur lors de l'analyse de l'image : " + (e.message || e), 'error');
   }
 }
 
-// Caméra live (HTTPS / localhost uniquement)
 export async function toggleCamera() {
   const readerEl = document.getElementById('reader');
   readerEl.classList.add('active');
@@ -148,6 +137,7 @@ export async function toggleCamera() {
   const videoEl = readerEl.querySelector('video');
 
   try {
+    const reader = await loadZxing();
     cameraControls = await reader.decodeFromVideoDevice(
       undefined,
       videoEl,

@@ -178,6 +178,21 @@
 
 <div id="toast"></div>
 
+<div id="boot-overlay" style="position:fixed;inset:0;background:rgba(15,14,11,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;color:#c9a84c;font-family:monospace;font-size:0.85rem">
+  Chargement…
+</div>
+
+<script>
+  // Affiche toute erreur JS à l'écran (impossible d'ouvrir la console sur mobile)
+  window.addEventListener('error', e => {
+    const t = document.getElementById('toast');
+    if (t) { t.textContent = 'Erreur : ' + (e.message || e); t.className = 'error show'; }
+  });
+  window.addEventListener('unhandledrejection', e => {
+    const t = document.getElementById('toast');
+    if (t) { t.textContent = 'Erreur : ' + (e.reason?.message || e.reason); t.className = 'error show'; }
+  });
+</script>
 <script type="module" src="src/main.js"></script>
 </body>
 </html>
