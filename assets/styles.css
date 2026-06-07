@@ -350,6 +350,10 @@ header {
 /* BOOK LIST (tableau) */
 #book-grid.list-view {
   display: block;
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
 }
 .book-table {
   width: 100%;
@@ -367,6 +371,10 @@ header {
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
 }
 .book-table thead th:hover { color: var(--gold); }
 .book-table thead th .sort-arrow { color: var(--gold); margin-left: 4px; font-size: 0.65rem; }
