@@ -45,6 +45,25 @@ async function fetchOpenLibrary(isbn) {
   };
 }
 
+// Tente de récupérer une couverture depuis Open Library Covers puis Google Books
+async function fetchCoverByIsbn(isbn) {
+  const olUrl = `https://covers.openlibrary.org/b/isbn/${isbn}-L.jpg?default=false`;
+  try {
+    const r = await fetch(olUrl);
+    if (r.ok) return olUrl.replace('?default=false', '');
+  } catch (e) {}
+
+  try {
+    const r = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
+    const d = await r.json();
+    if (d.items?.[0]?.volumeInfo?.imageLinks?.thumbnail) {
+      return d.items[0].volumeInfo.imageLinks.thumbnail.replace('zoom=1', 'zoom=3');
+    }
+  } catch (e) {}
+
+  return '';
+}
+
 // BnF (Bibliothèque nationale de France) — couvre quasi tous les livres
 // édités en France, y compris petits éditeurs absents d'Open Library/Google Books.
 // API SRU publique, CORS autorisé, sans clé.
@@ -96,7 +115,7 @@ async function fetchBnF(isbn) {
     year,
     pages,
     isbn,
-    cover: '', // BnF ne fournit pas d'URL d'image standardisée via SRU
+    cover: await fetchCoverByIsbn(isbn),
     desc: '',
     genre: subject ? mapGenre(subject) : '',
     lang: mapLang(langMap[lang639_2] || ''),
@@ -117,7 +136,7 @@ async function fetchGoogleBooks(isbn) {
     year: v.publishedDate ? v.publishedDate.slice(0, 4) : '',
     pages: v.pageCount || '',
     isbn,
-    cover: v.imageLinks ? (v.imageLinks.thumbnail || '') : '',
+    cover: v.imageLinks ? (v.imageLinks.thumbnail || '').replace('zoom=1', 'zoom=3') : '',
     desc: v.description || '',
     genre: (v.categories || []).slice(0, 1).map(mapGenre).join('') || '',
     lang: mapLang(v.language || ''),

@@ -1,7 +1,10 @@
 import { lookupIsbn } from './api.js';
 import { scanPhotoFile, toggleCamera, stopCamera } from './scanner.js';
 import { saveBook, resetForm, editBook, deleteBook } from './form.js';
-import { renderGrid, renderCategories, updateStats, setCategory, showDetail, closeModal } from './render.js';
+import {
+  renderGrid, renderCategories, updateStats, setCategory,
+  showDetail, closeModal, setView, sortBy, newCategory, initView,
+} from './render.js';
 import { exportCSV, exportJSON, exportSQL } from './export.js';
 
 // Les handlers inline `onclick="..."` ont besoin d'accès global.
@@ -18,6 +21,9 @@ Object.assign(window, {
   setCategory,
   showDetail,
   closeModal,
+  setView,
+  sortBy,
+  newCategory,
   exportCSV,
   exportJSON,
   exportSQL,
@@ -28,6 +34,7 @@ document.getElementById('isbn-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') lookupIsbn();
 });
 
-renderGrid();
+initView();
 renderCategories();
+renderGrid();
 updateStats();
